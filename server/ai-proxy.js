@@ -2,7 +2,9 @@
 // No QVAC SDK needed on the board
 import http from 'http';
 
-const LAPTOP_AI_URL = process.env.LAPTOP_AI_URL || 'http://localhost:4000';
+function getLaptopUrl() {
+  return process.env.LAPTOP_AI_URL || 'http://localhost:4000';
+}
 
 /**
  * Check if the laptop AI provider is reachable
@@ -10,7 +12,7 @@ const LAPTOP_AI_URL = process.env.LAPTOP_AI_URL || 'http://localhost:4000';
 export function checkHealth() {
   return new Promise((resolve) => {
     try {
-      const url = new URL(`${LAPTOP_AI_URL}/api/health`);
+      const url = new URL(`${getLaptopUrl()}/api/health`);
       const req = http.get({
         hostname: url.hostname,
         port: url.port,
@@ -52,7 +54,7 @@ export async function* queryStream(text, imageBase64) {
   if (imageBase64) body.image = imageBase64;
   const jsonBody = JSON.stringify(body);
 
-  const url = new URL(`${LAPTOP_AI_URL}/api/query`);
+  const url = new URL(`${getLaptopUrl()}/api/query`);
   
   const queue = [];
   let resolveNext = null;
@@ -150,7 +152,7 @@ export async function* queryStream(text, imageBase64) {
 export function transcribeAudio(wavBuffer) {
   return new Promise((resolve, reject) => {
     try {
-      const url = new URL(`${LAPTOP_AI_URL}/api/transcribe`);
+      const url = new URL(`${getLaptopUrl()}/api/transcribe`);
       const boundary = `----WebKitFormBoundary${Math.random().toString(36).substring(2)}`;
 
       const header = `--${boundary}\r\nContent-Disposition: form-data; name="audio"; filename="audio.wav"\r\nContent-Type: audio/wav\r\n\r\n`;
@@ -195,4 +197,5 @@ export function transcribeAudio(wavBuffer) {
     }
   });
 }
+
 
