@@ -1,4 +1,4 @@
-import { loadModel, completion, transcribe, ragSearch, ragIngest, EMBEDDINGGEMMA_300M_Q4_0, WHISPER_TINY } from '@qvac/sdk';
+import { loadModel, completion, transcribe, ragSearch, ragIngest, EMBEDDINGGEMMA_300M_Q4_0, WHISPER_TINY, QWEN3VL_2B_MULTIMODAL_Q4_K, MMPROJ_QWEN3VL_2B_MULTIMODAL_Q4_K } from '@qvac/sdk';
 import express from 'express';
 import multer from 'multer';
 import dotenv from 'dotenv';
@@ -24,6 +24,7 @@ const upload = multer({ dest: path.join(os.tmpdir(), 'pocketdoc-provider-uploads
 let llmModelId = null;
 let whisperModelId = null;
 let embeddingModelId = null;
+let isMultimodal = false;
 
 // ─── Model Initialization ───────────────────────────────────────────
 
@@ -31,12 +32,30 @@ async function initModels() {
   console.log('🔄 Initializing QVAC models on laptop...\n');
 
   // 1. LLM
-  const llmSrc = process.env.LLM_MODEL_SRC || 'https://huggingface.co/qvac/MedPsy-4B-GGUF/resolve/main/medpsy-4b-q4_k_m-imat.gguf';
-  console.log(`[QVAC] Loading LLM from: ${llmSrc}`);
+  const llmSrc = process.env.LLM_MODEL_SRC || QWEN3VL_2B_MULTIMODAL_Q4_K;
+
+  if (llmSrc === QWEN3VL_2B_MULTIMODAL_Q4_K) {
+    isMultimodal = true;
+  } else if (typeof llmSrc === 'string') {
+    const lower = llmSrc.toLowerCase();
+    if (lower.includes('vl') || lower.includes('multimodal') || lower.includes('qwen3-vl')) {
+      isMultimodal = true;
+    }
+  }
+
+  const modelConfig = { ctx_size: 2048 };
+  if (isMultimodal) {
+    const projSrc = process.env.LLM_PROJ_SRC || MMPROJ_QWEN3VL_2B_MULTIMODAL_Q4_K;
+    modelConfig.projectionModelSrc = projSrc;
+    console.log(`[QVAC] Loading LLM (multimodal) with projection: ${typeof projSrc === 'object' ? projSrc.name || 'default' : projSrc}`);
+  } else {
+    console.log(`[QVAC] Loading LLM (text-only) from: ${typeof llmSrc === 'object' ? llmSrc.name || 'default' : llmSrc}`);
+  }
+
   llmModelId = await loadModel({
     modelSrc: llmSrc,
     modelType: 'llm',
-    modelConfig: { ctx_size: 2048 },
+    modelConfig,
     onProgress: (p) => process.stdout.write(`\r   LLM download: ${p.percentage.toFixed(1)}%`)
   });
   console.log(`\n✅ LLM loaded: ${llmModelId}`);
@@ -149,6 +168,9 @@ app.post('/api/query', async (req, res) => {
   res.flushHeaders();
 
   try {
+    if (image && !isMultimodal) {
+      throw new Error('The currently loaded model does not support image analysis. Please use a multimodal model (e.g. Qwen3VL-2B) to analyze images.');
+    }
     // RAG search for context
     let ragContext = '';
     if (text && embeddingModelId) {
