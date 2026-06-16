@@ -1,0 +1,10 @@
+{
+  "name": "pocketdoc-workspace",
+  "version": "1.0.0",
+  "description": "PocketDoc offline medical triage assistant workspace",
+  "private": true,
+  "workspaces": [
+    "server",
+    "peer"
+  ]
+}

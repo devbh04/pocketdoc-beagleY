@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PocketDoc - Offline Triage Assistant</title>
+  <!-- Google Fonts Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="header-logo">
+        <span class="pulse-dot"></span>
+        <h1>PocketDoc</h1>
+      </div>
+      <span class="offline-badge">Offline Mode</span>
+    </header>
+
+    <main class="app-main">
+      <!-- Tabs Navigation -->
+      <nav class="tabs-nav">
+        <button class="tab-btn active" data-tab="text-tab">
+          <svg class="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+          Text
+        </button>
+        <button class="tab-btn" data-tab="voice-tab">
+          <svg class="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+          Voice
+        </button>
+        <button class="tab-btn" data-tab="camera-tab">
+          <svg class="tab-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          Camera
+        </button>
+      </nav>
+
+      <!-- Tabs Content -->
+      <section class="tab-content active" id="text-tab">
+        <div class="card glass">
+          <div class="card-body">
+            <label for="text-query-input" class="input-label">Describe your symptoms</label>
+            <textarea id="text-query-input" placeholder="E.g., I have a mild fever of 38.2°C, a sore throat, and a dry cough. What should I do?"></textarea>
+            <div class="char-counter"><span id="char-count">0</span> characters</div>
+            <button class="btn btn-primary" id="btn-send-text">Send Query</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-content" id="voice-tab">
+        <div class="card glass">
+          <div class="card-body voice-body">
+            <div class="voice-status">Tap the microphone to start recording symptoms</div>
+            
+            <div class="recording-container">
+              <div class="visualizer-container">
+                <canvas id="waveform-visualizer"></canvas>
+              </div>
+              <button class="mic-button" id="btn-mic">
+                <svg fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"></path></svg>
+              </button>
+              <div class="recording-timer" id="rec-timer">00:00</div>
+            </div>
+
+            <audio id="audio-playback" controls style="display: none;"></audio>
+            <button class="btn btn-primary" id="btn-send-voice" disabled>Analyze Recording</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-content" id="camera-tab">
+        <div class="card glass">
+          <div class="card-body camera-body">
+            <div class="viewfinder-container">
+              <video id="viewfinder" autoplay playsinline></video>
+              <canvas id="snapshot-canvas" style="display: none;"></canvas>
+              <img id="snapshot-preview" style="display: none;" alt="Symptom snapshot">
+            </div>
+
+            <div class="camera-actions">
+              <button class="btn btn-secondary" id="btn-capture">Capture Photo</button>
+              <button class="btn btn-secondary" id="btn-retake" style="display: none;">Retake Photo</button>
+            </div>
+
+            <div class="note-input-container">
+              <label for="image-query-note" class="input-label">Add symptom details (optional)</label>
+              <input type="text" id="image-query-note" placeholder="E.g., I scraped my forearm on a fence. Is it infected?">
+            </div>
+
+            <button class="btn btn-primary" id="btn-send-image" disabled>Analyze Skin Symptom</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Response Area -->
+      <section class="response-section" style="display: none;" id="response-area">
+        <div class="response-title">
+          <h2>Triage Assessment</h2>
+          <span class="status-indicator" id="stream-status">Processing...</span>
+        </div>
+        
+        <div class="card response-card glass">
+          <div class="card-body">
+            <!-- Transcription preview for voice queries -->
+            <div class="transcription-box" id="transcription-preview" style="display: none;">
+              <strong>You said:</strong> <span class="transcription-text"></span>
+            </div>
+
+            <div class="response-content" id="response-text">
+              <!-- Tokens stream in here -->
+            </div>
+
+            <!-- Triage Footer Stats Badge -->
+            <div class="response-stats-container">
+              <div class="stats-badge" id="stats-badge">
+                <span class="badge-mode">Local</span>
+                <span class="badge-dot">·</span>
+                <span class="badge-ttft">TTFT: -</span>
+                <span class="badge-dot">·</span>
+                <span class="badge-tps">0.0 t/s</span>
+                <span class="badge-dot">·</span>
+                <span class="badge-ram">RAM: -</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>PocketDoc is an offline triage reference model and is NOT a substitute for professional medical diagnostics.</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

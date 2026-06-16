@@ -1,0 +1,14 @@
+{
+  "name": "pocketdoc-peer",
+  "version": "1.0.0",
+  "description": "PocketDoc laptop P2P provider",
+  "type": "module",
+  "main": "provider.js",
+  "scripts": {
+    "start": "node provider.js"
+  },
+  "dependencies": {
+    "@qvac/sdk": "^0.13.2",
+    "dotenv": "^16.4.5"
+  }
+}

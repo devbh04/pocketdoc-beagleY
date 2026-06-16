@@ -1,0 +1,17 @@
+{
+  "name": "pocketdoc-server",
+  "version": "1.0.0",
+  "description": "PocketDoc server backend running on BeagleY-AI",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@qvac/sdk": "^0.13.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "ws": "^8.17.0"
+  }
+}
