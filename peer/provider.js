@@ -33,7 +33,7 @@ async function initModels() {
     modelSrc: llmSrc,
     modelType: 'llm',
     modelConfig: { ctx_size: 2048 },
-    onProgress: (p) => process.stdout.write(`\r   LLM download: ${(p.percent * 100).toFixed(1)}%`)
+    onProgress: (p) => process.stdout.write(`\r   LLM download: ${p.percentage.toFixed(1)}%`)
   });
   console.log(`\n✅ LLM loaded: ${llmModelId}`);
 
@@ -41,7 +41,7 @@ async function initModels() {
   console.log('[QVAC] Loading Whisper Tiny STT...');
   whisperModelId = await loadModel({
     modelSrc: WHISPER_TINY,
-    onProgress: (p) => process.stdout.write(`\r   Whisper download: ${(p.percent * 100).toFixed(1)}%`)
+    onProgress: (p) => process.stdout.write(`\r   Whisper download: ${p.percentage.toFixed(1)}%`)
   });
   console.log(`\n✅ Whisper loaded: ${whisperModelId}`);
 
@@ -49,7 +49,7 @@ async function initModels() {
   console.log('[QVAC] Loading Gemma Embedding for RAG...');
   embeddingModelId = await loadModel({
     modelSrc: EMBEDDINGGEMMA_300M_Q4_0,
-    onProgress: (p) => process.stdout.write(`\r   Embedding download: ${(p.percent * 100).toFixed(1)}%`)
+    onProgress: (p) => process.stdout.write(`\r   Embedding download: ${p.percentage.toFixed(1)}%`)
   });
   console.log(`\n✅ Embedding loaded: ${embeddingModelId}`);
 

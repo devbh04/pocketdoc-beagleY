@@ -27,7 +27,7 @@ async function main() {
       modelSrc: llmSrc,
       modelType: 'llm',
       modelConfig: { ctx_size: 2048 },
-      onProgress: (p) => process.stdout.write(`\r   LLM download: ${(p.percent * 100).toFixed(1)}%`)
+      onProgress: (p) => process.stdout.write(`\r   LLM download: ${p.percentage.toFixed(1)}%`)
     });
     console.log(`\n✅ LLM loaded: ${llmModelId}`);
   } catch (err) {
