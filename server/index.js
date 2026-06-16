@@ -34,6 +34,11 @@ const upload = multer({ dest: path.join(os.tmpdir(), 'pocketdoc-uploads') });
 // Serve client app statically
 app.use(express.static(path.join(__dirname, '..', 'client')));
 
+// Fallback to explicitly serve index.html for root path
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'client', 'index.html'));
+});
+
 // Helper to calculate server RAM RSS in MB
 function getRamUsage() {
   return process.memoryUsage().rss / 1024 / 1024;
@@ -213,6 +218,7 @@ async function start() {
     console.log('====================================================');
     console.log(`🩺 PocketDoc running at: http://localhost:${PORT}`);
     console.log(`📡 Serving clients over LAN (0.0.0.0)`);
+    console.log(`📂 Static assets path: ${path.join(__dirname, '..', 'client')}`);
     console.log(`🧠 AI powered by laptop at: ${process.env.LAPTOP_AI_URL || 'http://localhost:4000'}`);
     console.log('====================================================');
   });
