@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import * as qvac from '../server/qvac.js';
+import { loadModel, completion } from '@qvac/sdk';
 
 dotenv.config();
 
@@ -16,12 +16,22 @@ const BENCHMARK_QUERIES = [
   "When should I go to the ER for chest pain?"
 ];
 
+let llmModelId = null;
+
 async function main() {
   console.log('🔄 Initializing QVAC models for local benchmark run...');
   try {
-    await qvac.init();
+    const llmSrc = process.env.LLM_MODEL_SRC || 'https://huggingface.co/qvac/MedPsy-4B-GGUF/resolve/main/MedPsy-4B-Q4_K_M.gguf';
+    console.log(`[QVAC] Loading LLM from: ${llmSrc}`);
+    llmModelId = await loadModel({
+      modelSrc: llmSrc,
+      modelType: 'llm',
+      modelConfig: { ctx_size: 2048 },
+      onProgress: (p) => process.stdout.write(`\r   LLM download: ${(p.percent * 100).toFixed(1)}%`)
+    });
+    console.log(`\n✅ LLM loaded: ${llmModelId}`);
   } catch (err) {
-    console.error('❌ Failed to initialize QVAC core:', err);
+    console.error('❌ Failed to initialize QVAC LLM:', err);
     process.exit(1);
   }
 
@@ -39,7 +49,14 @@ async function main() {
     let tokenCount = 0;
 
     try {
-      const run = await qvac.queryLocal(query);
+      const run = completion({
+        modelId: llmModelId,
+        history: [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: query }
+        ],
+        stream: true
+      });
       
       // Consume tokens as they arrive to measure TTFT and throughput
       for await (const event of run.events) {
@@ -79,7 +96,7 @@ async function main() {
     }
   }
 
-  console.log('\n📊 Benchmark Report (MedPsy-1.7B Local Inference)');
+  console.log('\n📊 Benchmark Report (MedPsy-4B Local Inference)');
   console.log('=================================================================================');
   console.table(results);
   console.log('=================================================================================');
@@ -87,3 +104,4 @@ async function main() {
 }
 
 main().catch(console.error);
+
