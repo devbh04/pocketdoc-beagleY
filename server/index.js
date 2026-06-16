@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 
 import * as ai from './ai-proxy.js';
 import { logQuery } from './logger.js';
+import { loadModel, completion, ragSearch, ragIngest, EMBEDDINGGEMMA_300M_Q4_0 } from '@qvac/sdk';
 
 dotenv.config();
 
@@ -24,6 +25,86 @@ const PORT = process.env.PORT || 3001;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+let localLlmModelId = null;
+let localEmbeddingModelId = null;
+
+function buildSystemPrompt(ragContext) {
+  return `You are PocketDoc, a fully offline medical triage assistant.
+Use the following local knowledge base context to answer the user's query if relevant.
+Give a clear, structured triage response using the following headers:
+- URGENCY LEVEL (choose from: Low, Medium, High, Emergency)
+- POSSIBLE CAUSES (provide a brief list, explicitly state this is not a diagnosis)
+- HOME CARE & FIRST-AID (safe first-aid and OTC guidance, do NOT suggest prescription medications)
+- RED FLAGS (critical symptoms to watch out for)
+- NEXT STEPS (when to see a doctor or go to the ER)
+
+Local Knowledge Context:
+${ragContext || 'No relevant local context found.'}
+
+Be clear, professional, safe, and direct.`;
+}
+
+async function initLocalModels() {
+  console.log('🔄 Initializing QVAC models locally on board...\n');
+
+  const llmSrc = process.env.BOARD_LLM_SRC || 'https://huggingface.co/qvac/MedPsy-1.7B-GGUF/resolve/main/medpsy-1.7b-q4_k_m-imat.gguf';
+  console.log(`[QVAC] Loading local LLM from: ${llmSrc}`);
+  localLlmModelId = await loadModel({
+    modelSrc: llmSrc,
+    modelType: 'llm',
+    modelConfig: { ctx_size: 2048 },
+    onProgress: (p) => process.stdout.write(`\r   LLM download: ${p.percentage.toFixed(1)}%`)
+  });
+  console.log(`\n✅ Local LLM loaded: ${localLlmModelId}`);
+
+  console.log('[QVAC] Loading Gemma Embedding locally for RAG...');
+  localEmbeddingModelId = await loadModel({
+    modelSrc: EMBEDDINGGEMMA_300M_Q4_0,
+    onProgress: (p) => process.stdout.write(`\r   Embedding download: ${p.percentage.toFixed(1)}%`)
+  });
+  console.log(`\n✅ Local Embedding loaded: ${localEmbeddingModelId}`);
+
+  console.log('\n✅ All local models initialized!\n');
+}
+
+async function indexKnowledge() {
+  const knowledgeDir = path.join(__dirname, '..', 'knowledge');
+  if (!fs.existsSync(knowledgeDir)) {
+    console.log('⚠️  No knowledge/ directory found. Skipping RAG indexing.');
+    return;
+  }
+
+  const files = ['first-aid.md', 'symptoms.md', 'medications.md', 'emergency.md'];
+  const documents = [];
+
+  for (const file of files) {
+    const filePath = path.join(knowledgeDir, file);
+    if (fs.existsSync(filePath)) {
+      console.log(`📖 Reading: ${file}`);
+      documents.push(fs.readFileSync(filePath, 'utf8'));
+    }
+  }
+
+  if (documents.length === 0) {
+    console.log('⚠️  No knowledge documents found.');
+    return;
+  }
+
+  console.log('📥 Ingesting documents into RAG workspace "pocketdoc"...');
+  const result = await ragIngest({
+    modelId: localEmbeddingModelId,
+    documents,
+    workspace: 'pocketdoc',
+    chunk: true,
+    chunkOpts: { chunkSize: 500, chunkOverlap: 100, chunkStrategy: 'paragraph' },
+    onProgress: (stage, current, total) => {
+      console.log(`   [RAG] ${stage}: ${current}/${total}`);
+    }
+  });
+
+  console.log(`✅ RAG indexed: ${result.processed.length} chunks\n`);
+}
 
 // Configure body parsers & uploads
 app.use(express.json({ limit: '10mb' }));
@@ -140,21 +221,62 @@ wss.on('connection', (ws) => {
 
       if (type === 'text') {
         inputType = 'text';
-        ws.send(JSON.stringify({ type: 'status', text: 'Processing query on laptop...' }));
+        ws.send(JSON.stringify({ type: 'status', text: 'Processing query locally on board...' }));
       }
 
-      // ── Stream tokens from laptop AI provider ──
-      const imagePayload = (type === 'image') ? image : null;
-      for await (const event of ai.queryStream(queryText, imagePayload)) {
-        if (event.type === 'token') {
-          if (!firstTokenTime) firstTokenTime = Date.now();
-          tokenCount++;
-          ws.send(JSON.stringify({ type: 'token', text: event.text }));
-        } else if (event.type === 'done') {
-          tokenCount = event.tokens || tokenCount;
-        } else if (event.type === 'error') {
-          throw new Error(event.message);
+      if (type === 'image') {
+        mode = 'delegated';
+        const imagePayload = image;
+        for await (const event of ai.queryStream(queryText, imagePayload)) {
+          if (event.type === 'token') {
+            if (!firstTokenTime) firstTokenTime = Date.now();
+            tokenCount++;
+            ws.send(JSON.stringify({ type: 'token', text: event.text }));
+          } else if (event.type === 'done') {
+            tokenCount = event.tokens || tokenCount;
+          } else if (event.type === 'error') {
+            throw new Error(event.message);
+          }
         }
+      } else {
+        mode = 'local';
+        let ragContext = '';
+        if (queryText && localEmbeddingModelId) {
+          try {
+            const results = await ragSearch({
+              modelId: localEmbeddingModelId,
+              query: queryText,
+              topK: 3,
+              workspace: 'pocketdoc'
+            });
+            if (results && results.length > 0) {
+              ragContext = results.map(r => r.content).join('\n\n');
+            }
+          } catch (err) {
+            console.error('[RAG] Search failed:', err.message);
+          }
+        }
+
+        const history = [
+          { role: 'system', content: buildSystemPrompt(ragContext) },
+          { role: 'user', content: queryText }
+        ];
+
+        const run = completion({
+          modelId: localLlmModelId,
+          history,
+          stream: true
+        });
+
+        for await (const event of run.events) {
+          if (event.type === 'contentDelta') {
+            if (!firstTokenTime) firstTokenTime = Date.now();
+            tokenCount++;
+            ws.send(JSON.stringify({ type: 'token', text: event.text }));
+          }
+        }
+
+        await run.final;
       }
 
       // Calculate performance metrics
@@ -200,18 +322,22 @@ wss.on('connection', (ws) => {
 
 // Initialize and start listening
 async function start() {
+  try {
+    await initLocalModels();
+    await indexKnowledge();
+  } catch (err) {
+    console.error('❌ Board local model initialization failed:', err);
+  }
+
   // Check if laptop AI provider is reachable
   const health = await ai.checkHealth();
   if (health.status === 'unreachable') {
     console.warn('====================================================');
     console.warn(`⚠️  Laptop AI provider is not reachable at: ${process.env.LAPTOP_AI_URL || 'http://localhost:4000'}`);
-    console.warn('   Make sure to start the provider on your laptop first:');
-    console.warn('   cd peer && npm start');
-    console.warn('   Then set LAPTOP_AI_URL in server/.env');
+    console.warn('   Make sure to start the provider on your laptop for Camera triage.');
     console.warn('====================================================');
-    console.warn('Starting server anyway — queries will fail until provider is online.\n');
   } else {
-    console.log(`✅ Laptop AI provider connected: ${JSON.stringify(health)}`);
+    console.log(`✅ Laptop AI provider connected for Camera delegation: ${JSON.stringify(health)}`);
   }
 
   server.listen(PORT, '0.0.0.0', () => {
@@ -219,7 +345,8 @@ async function start() {
     console.log(`🩺 PocketDoc running at: http://localhost:${PORT}`);
     console.log(`📡 Serving clients over LAN (0.0.0.0)`);
     console.log(`📂 Static assets path: ${path.join(__dirname, '..', 'client')}`);
-    console.log(`🧠 AI powered by laptop at: ${process.env.LAPTOP_AI_URL || 'http://localhost:4000'}`);
+    console.log(`🧠 Local Board AI: MedPsy-1.7B`);
+    console.log(`🧠 Delegated Laptop AI: ${process.env.LAPTOP_AI_URL || 'http://localhost:4000'}`);
     console.log('====================================================');
   });
 }
