@@ -13,7 +13,8 @@ async function main() {
     process.exit(1);
   }
 
-  const knowledgeDir = path.join(process.cwd(), 'knowledge');
+  // Look for knowledge/ directory relative to project root (parent of peer/)
+  const knowledgeDir = path.join(process.cwd(), '..', 'knowledge');
   const files = ['first-aid.md', 'symptoms.md', 'medications.md', 'emergency.md'];
   
   const documents = [];
@@ -24,7 +25,7 @@ async function main() {
       const content = fs.readFileSync(filePath, 'utf8');
       documents.push(content);
     } else {
-      console.warn(`⚠️ Warning: knowledge file ${file} not found.`);
+      console.warn(`⚠️ Warning: knowledge file ${file} not found at ${filePath}`);
     }
   }
 

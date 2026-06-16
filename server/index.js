@@ -9,8 +9,7 @@ import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
-import * as qvac from './qvac.js';
-import { routeQuery } from './router.js';
+import * as ai from './ai-proxy.js';
 import { logQuery } from './logger.js';
 
 dotenv.config();
@@ -29,7 +28,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const upload = multer({ dest: path.join(os.tmpdir(), 'pocketdoc-uploads') });
 
 // Serve client app statically
-const __dirname = path.dirname(new URL(import.meta.url).pathname);
 app.use(express.static(path.join(process.cwd(), 'client')));
 
 // Helper to calculate server RAM RSS in MB
@@ -48,64 +46,12 @@ async function convertToWav(inputPath, outputPath) {
   }
 }
 
-// POST /query/text - Synchronous routing check & RAG answer initiator
-app.post('/query/text', async (req, res) => {
-  const { text } = req.body;
-  if (!text) return res.status(400).json({ error: 'Text query is required.' });
-
-  const routing = routeQuery(text, null);
+// GET /api/status — Check board + laptop status
+app.get('/api/status', async (req, res) => {
+  const health = await ai.checkHealth();
   res.json({
-    message: 'Routing determined. Stream tokens via WebSocket for complete answer.',
-    routing
-  });
-});
-
-// POST /query/voice - Handles WAV/WEBM uploads, transcodes, and initiates Whisper
-app.post('/query/voice', upload.single('audio'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Audio file is required.' });
-
-  const tempWav = path.join(os.tmpdir(), `voice_${Date.now()}.wav`);
-  try {
-    // 1. Transcode input audio format (webm/m4a/ogg) to Whisper-compliant WAV
-    await convertToWav(req.file.path, tempWav);
-    const wavBuffer = fs.readFileSync(tempWav);
-
-    // 2. Perform local transcription
-    const { transcribedText, run } = await qvac.queryVoice(wavBuffer);
-    
-    // We stream the output, but for a simple POST request we can wait and send the full text
-    let contentText = '';
-    for await (const event of run.events) {
-      if (event.type === 'contentDelta') {
-        contentText += event.text;
-      }
-    }
-    
-    res.json({
-      transcription: transcribedText,
-      answer: contentText
-    });
-  } catch (err) {
-    console.error('[Server Voice] Error:', err);
-    res.status(500).json({ error: err.message });
-  } finally {
-    // Cleanup temporary files
-    try {
-      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-      if (fs.existsSync(tempWav)) fs.unlinkSync(tempWav);
-    } catch (_) {}
-  }
-});
-
-// POST /query/image - Direct image delegation endpoint
-app.post('/query/image', async (req, res) => {
-  const { text, image } = req.body;
-  if (!image) return res.status(400).json({ error: 'Image base64 data is required.' });
-
-  const routing = routeQuery(text, image);
-  res.json({
-    message: 'Image query mapped.',
-    routing
+    board: 'online',
+    laptop: health
   });
 });
 
@@ -137,77 +83,72 @@ wss.on('connection', (ws) => {
     const startTime = Date.now();
     let firstTokenTime = null;
     let tokenCount = 0;
-    let run = null;
-    let mode = 'local';
+    let mode = 'delegated';
     let inputType = 'text';
 
     try {
-      if (type === 'text') {
-        inputType = 'text';
-        // 1. Determine execution mode (local vs delegated)
-        const decision = routeQuery(text, null);
-        mode = decision.mode;
+      let queryText = text;
 
-        // 2. Route completion
-        if (mode === 'delegated') {
-          run = await qvac.queryDelegate(text, null);
-        } else {
-          run = await qvac.queryLocal(text);
-        }
-
-      } else if (type === 'voice') {
+      // ── Voice: transcode & transcribe via laptop ──
+      if (type === 'voice') {
         inputType = 'voice';
         if (!audio) throw new Error('Base64 audio payload missing.');
-        
-        ws.send(JSON.stringify({ type: 'status', text: 'Transcribing voice...' }));
-        
+
+        ws.send(JSON.stringify({ type: 'status', text: 'Transcribing voice on laptop...' }));
+
         // Save base64 audio to temp file
         const tempRaw = path.join(os.tmpdir(), `raw_${Date.now()}.webm`);
         const tempWav = path.join(os.tmpdir(), `transcode_${Date.now()}.wav`);
-        
+
         const audioBuffer = Buffer.from(audio.split(',')[1] || audio, 'base64');
         fs.writeFileSync(tempRaw, audioBuffer);
-        
-        // Transcode and run Whisper
+
+        // Transcode to WAV
         await convertToWav(tempRaw, tempWav);
         const wavBuffer = fs.readFileSync(tempWav);
-        
-        const voiceResult = await qvac.queryVoice(wavBuffer);
-        
-        // Clean up audio files
+
+        // Clean up temp files
         try {
           if (fs.existsSync(tempRaw)) fs.unlinkSync(tempRaw);
           if (fs.existsSync(tempWav)) fs.unlinkSync(tempWav);
         } catch (_) {}
 
-        // Send back transcription
-        ws.send(JSON.stringify({ type: 'transcription', text: voiceResult.transcribedText }));
-        run = voiceResult.run;
+        // Transcribe via laptop
+        queryText = await ai.transcribeAudio(wavBuffer);
+        ws.send(JSON.stringify({ type: 'transcription', text: queryText }));
 
-      } else if (type === 'image') {
-        inputType = 'image';
-        if (!image) throw new Error('Base64 image payload missing.');
-        
-        // Vision requests always delegate to laptop
-        mode = 'delegated';
-        ws.send(JSON.stringify({ type: 'status', text: 'Delegating symptom image analysis...' }));
-        run = await qvac.queryDelegate(text, image);
-
-      } else {
-        throw new Error(`Unsupported query type: ${type}`);
-      }
-
-      // Stream tokens back over WebSocket
-      for await (const event of run.events) {
-        if (event.type === 'contentDelta') {
-          if (!firstTokenTime) firstTokenTime = Date.now();
-          tokenCount++;
-          ws.send(JSON.stringify({ type: 'token', text: event.text }));
+        if (!queryText || queryText.trim() === '') {
+          throw new Error('Transcription returned empty. Please speak clearly and try again.');
         }
       }
 
-      // Wait for completion run finalization to get stats
-      const finalResult = await run.final;
+      // ── Image ──
+      if (type === 'image') {
+        inputType = 'image';
+        if (!image) throw new Error('Base64 image payload missing.');
+        ws.send(JSON.stringify({ type: 'status', text: 'Analyzing symptom image on laptop...' }));
+      }
+
+      if (type === 'text') {
+        inputType = 'text';
+        ws.send(JSON.stringify({ type: 'status', text: 'Processing query on laptop...' }));
+      }
+
+      // ── Stream tokens from laptop AI provider ──
+      const imagePayload = (type === 'image') ? image : null;
+      for await (const event of ai.queryStream(queryText, imagePayload)) {
+        if (event.type === 'token') {
+          if (!firstTokenTime) firstTokenTime = Date.now();
+          tokenCount++;
+          ws.send(JSON.stringify({ type: 'token', text: event.text }));
+        } else if (event.type === 'done') {
+          tokenCount = event.tokens || tokenCount;
+        } else if (event.type === 'error') {
+          throw new Error(event.message);
+        }
+      }
+
+      // Calculate performance metrics
       const ttft = firstTokenTime ? (firstTokenTime - startTime) : 0;
       const duration = (Date.now() - startTime) / 1000;
       const tps = duration > 0 ? (tokenCount / duration) : 0;
@@ -221,7 +162,7 @@ wss.on('connection', (ws) => {
         tokens: tokenCount,
         tokensPerSec: tps,
         ramUsedMb: ram,
-        queryPreview: text || '[Voice/Image Query]'
+        queryPreview: queryText || '[Voice/Image Query]'
       });
 
       // Send performance metadata
@@ -248,20 +189,29 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Initialize QVAC and start listening
+// Initialize and start listening
 async function start() {
-  try {
-    await qvac.init();
-    server.listen(PORT, '0.0.0.0', () => {
-      console.log(`====================================================`);
-      console.log(`🩺 PocketDoc running at: http://localhost:${PORT}`);
-      console.log(`📡 Serving edge clients over LAN (0.0.0.0)`);
-      console.log(`====================================================`);
-    });
-  } catch (err) {
-    console.error('❌ Failed to start PocketDoc server:', err);
-    process.exit(1);
+  // Check if laptop AI provider is reachable
+  const health = await ai.checkHealth();
+  if (health.status === 'unreachable') {
+    console.warn('====================================================');
+    console.warn(`⚠️  Laptop AI provider is not reachable at: ${process.env.LAPTOP_AI_URL || 'http://localhost:4000'}`);
+    console.warn('   Make sure to start the provider on your laptop first:');
+    console.warn('   cd peer && npm start');
+    console.warn('   Then set LAPTOP_AI_URL in server/.env');
+    console.warn('====================================================');
+    console.warn('Starting server anyway — queries will fail until provider is online.\n');
+  } else {
+    console.log(`✅ Laptop AI provider connected: ${JSON.stringify(health)}`);
   }
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log('====================================================');
+    console.log(`🩺 PocketDoc running at: http://localhost:${PORT}`);
+    console.log(`📡 Serving clients over LAN (0.0.0.0)`);
+    console.log(`🧠 AI powered by laptop at: ${process.env.LAPTOP_AI_URL || 'http://localhost:4000'}`);
+    console.log('====================================================');
+  });
 }
 
 start();

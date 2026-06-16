@@ -1,7 +1,7 @@
 {
   "name": "pocketdoc-peer",
   "version": "1.0.0",
-  "description": "PocketDoc laptop P2P provider",
+  "description": "PocketDoc laptop AI provider server",
   "type": "module",
   "main": "provider.js",
   "scripts": {
@@ -9,6 +9,8 @@
   },
   "dependencies": {
     "@qvac/sdk": "^0.13.2",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1"
   }
 }
