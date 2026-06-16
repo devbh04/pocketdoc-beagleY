@@ -1,6 +1,10 @@
 import { loadModel, ragIngest, EMBEDDINGGEMMA_300M_Q4_0 } from '@qvac/sdk';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function main() {
   console.log('🔄 Loading Gemma Embedding model...');
@@ -13,8 +17,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Look for knowledge/ directory relative to project root (parent of peer/)
-  const knowledgeDir = path.join(process.cwd(), '..', 'knowledge');
+  // Look for knowledge/ directory relative to project root
+  const knowledgeDir = path.join(__dirname, '..', 'knowledge');
   const files = ['first-aid.md', 'symptoms.md', 'medications.md', 'emergency.md'];
   
   const documents = [];

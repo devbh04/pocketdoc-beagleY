@@ -1,7 +1,10 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-const logFile = path.join(process.cwd(), 'logs', 'queries.jsonl');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const logFile = path.join(__dirname, 'logs', 'queries.jsonl');
 
 export function logQuery({ inputType, mode, ttftMs, tokens, tokensPerSec, ramUsedMb, queryPreview }) {
   const logEntry = {

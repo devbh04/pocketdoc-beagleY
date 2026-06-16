@@ -8,6 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
 
 import * as ai from './ai-proxy.js';
 import { logQuery } from './logger.js';
@@ -21,6 +22,9 @@ const wss = new WebSocketServer({ noServer: true });
 
 const PORT = process.env.PORT || 3000;
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // Configure body parsers & uploads
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -28,7 +32,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const upload = multer({ dest: path.join(os.tmpdir(), 'pocketdoc-uploads') });
 
 // Serve client app statically
-app.use(express.static(path.join(process.cwd(), 'client')));
+app.use(express.static(path.join(__dirname, '..', 'client')));
 
 // Helper to calculate server RAM RSS in MB
 function getRamUsage() {

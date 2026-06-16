@@ -7,6 +7,10 @@ import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -59,7 +63,7 @@ async function initModels() {
 // ─── RAG Knowledge Indexing ─────────────────────────────────────────
 
 async function indexKnowledge() {
-  const knowledgeDir = path.join(process.cwd(), '..', 'knowledge');
+  const knowledgeDir = path.join(__dirname, '..', 'knowledge');
   if (!fs.existsSync(knowledgeDir)) {
     console.log('⚠️  No knowledge/ directory found. Skipping RAG indexing.');
     return;
