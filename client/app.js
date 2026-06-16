@@ -265,6 +265,10 @@ btnMic.addEventListener('click', async () => {
   } else {
     // Start Recording
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Web Security Error: Microphone access is blocked over insecure HTTP connections. To use voice triage over WiFi, you must enable the "unsafely-treat-insecure-origin-as-secure" flag in chrome://flags and add http://' + window.location.host);
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunks = [];
       
@@ -346,6 +350,10 @@ let capturedImageBase64 = null;
 
 async function startCamera() {
   try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Web Security Error: Camera access is blocked over insecure HTTP connections. To use camera triage over WiFi, you must enable the "unsafely-treat-insecure-origin-as-secure" flag in chrome://flags and add http://' + window.location.host);
+      return;
+    }
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment' },
       audio: false
