@@ -21,7 +21,7 @@ let llmModelId = null;
 async function main() {
   console.log('🔄 Initializing QVAC models for local benchmark run...');
   try {
-    const llmSrc = process.env.LLM_MODEL_SRC || 'https://huggingface.co/qvac/MedPsy-4B-GGUF/resolve/main/MedPsy-4B-Q4_K_M.gguf';
+    const llmSrc = process.env.LLM_MODEL_SRC || 'https://huggingface.co/qvac/MedPsy-4B-GGUF/resolve/main/medpsy-4b-q4_k_m-imat.gguf';
     console.log(`[QVAC] Loading LLM from: ${llmSrc}`);
     llmModelId = await loadModel({
       modelSrc: llmSrc,
