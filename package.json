@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "PocketDoc offline medical triage assistant workspace",
   "private": true,
+  "type": "module",
   "workspaces": [
     "server",
     "peer"
