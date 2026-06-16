@@ -20,7 +20,7 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
