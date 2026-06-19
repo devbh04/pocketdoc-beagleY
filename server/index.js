@@ -10,9 +10,19 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 
-import * as ai from './ai-proxy.js';
 import { logQuery } from './logger.js';
-import { loadModel, completion, ragSearch, ragIngest, EMBEDDINGGEMMA_300M_Q4_0 } from '@qvac/sdk';
+import { 
+  loadModel, 
+  completion, 
+  transcribe, 
+  heartbeat, 
+  ragSearch, 
+  ragIngest, 
+  EMBEDDINGGEMMA_300M_Q4_0, 
+  WHISPER_TINY, 
+  QWEN3VL_2B_MULTIMODAL_Q4_K, 
+  MMPROJ_QWEN3VL_2B_MULTIMODAL_Q4_K 
+} from '@qvac/sdk';
 
 dotenv.config();
 
@@ -28,6 +38,8 @@ const __dirname = path.dirname(__filename);
 
 let localLlmModelId = null;
 let localEmbeddingModelId = null;
+let localWhisperModelId = null;
+let delegatedLlmModelId = null;
 
 function buildSystemPrompt(ragContext) {
   return `You are PocketDoc, a fully offline medical triage assistant.
@@ -65,7 +77,44 @@ async function initLocalModels() {
   });
   console.log(`\n✅ Local Embedding loaded: ${localEmbeddingModelId}`);
 
+  console.log('[QVAC] Loading Whisper Tiny STT locally...');
+  localWhisperModelId = await loadModel({
+    modelSrc: WHISPER_TINY,
+    onProgress: (p) => process.stdout.write(`\r   Whisper download: ${p.percentage.toFixed(1)}%`)
+  });
+  console.log(`\n✅ Local Whisper loaded: ${localWhisperModelId}`);
+
   console.log('\n✅ All local models initialized!\n');
+}
+
+async function initDelegatedModel() {
+  const providerKey = process.env.LAPTOP_PROVIDER_KEY;
+  if (!providerKey) {
+    console.warn('====================================================');
+    console.warn('⚠️  LAPTOP_PROVIDER_KEY is not set in environment.');
+    console.warn('   Multimodal camera triage will be unavailable.');
+    console.warn('====================================================');
+    return;
+  }
+
+  console.log(`📡 Connecting to QVAC P2P peer provider: ${providerKey}`);
+  try {
+    delegatedLlmModelId = await loadModel({
+      modelSrc: QWEN3VL_2B_MULTIMODAL_Q4_K,
+      modelType: 'llm',
+      modelConfig: {
+        ctx_size: 2048,
+        projectionModelSrc: MMPROJ_QWEN3VL_2B_MULTIMODAL_Q4_K
+      },
+      delegate: {
+        providerPublicKey: providerKey,
+        timeout: 60_000
+      }
+    });
+    console.log(`✅ Delegated Multimodal LLM loaded: ${delegatedLlmModelId}`);
+  } catch (err) {
+    console.error(`❌ Failed to load delegated multimodal model on peer: ${err.message}`);
+  }
 }
 
 async function indexKnowledge() {
@@ -138,10 +187,26 @@ async function convertToWav(inputPath, outputPath) {
 
 // GET /api/status — Check board + laptop status
 app.get('/api/status', async (req, res) => {
-  const health = await ai.checkHealth();
+  let laptopStatus = 'unconfigured';
+  const providerKey = process.env.LAPTOP_PROVIDER_KEY;
+
+  if (providerKey) {
+    try {
+      await heartbeat({
+        delegate: {
+          providerPublicKey: providerKey,
+          timeout: 5000
+        }
+      });
+      laptopStatus = 'online';
+    } catch (err) {
+      laptopStatus = 'unreachable';
+    }
+  }
+
   res.json({
     board: 'online',
-    laptop: health
+    laptop: { status: laptopStatus }
   });
 });
 
@@ -179,12 +244,12 @@ wss.on('connection', (ws) => {
     try {
       let queryText = text;
 
-      // ── Voice: transcode & transcribe via laptop ──
+      // ── Voice: transcode & transcribe locally on board ──
       if (type === 'voice') {
         inputType = 'voice';
         if (!audio) throw new Error('Base64 audio payload missing.');
 
-        ws.send(JSON.stringify({ type: 'status', text: 'Transcribing voice on laptop...' }));
+        ws.send(JSON.stringify({ type: 'status', text: 'Transcribing voice locally on board...' }));
 
         // Save base64 audio to temp file
         const tempRaw = path.join(os.tmpdir(), `raw_${Date.now()}.webm`);
@@ -203,8 +268,15 @@ wss.on('connection', (ws) => {
           if (fs.existsSync(tempWav)) fs.unlinkSync(tempWav);
         } catch (_) {}
 
-        // Transcribe via laptop
-        queryText = await ai.transcribeAudio(wavBuffer);
+        if (!localWhisperModelId) {
+          throw new Error('Local Whisper model is not initialized.');
+        }
+
+        // Transcribe locally using QVAC Whisper STT
+        queryText = await transcribe({
+          modelId: localWhisperModelId,
+          audioChunk: wavBuffer
+        });
         ws.send(JSON.stringify({ type: 'transcription', text: queryText }));
 
         if (!queryText || queryText.trim() === '') {
@@ -216,7 +288,7 @@ wss.on('connection', (ws) => {
       if (type === 'image') {
         inputType = 'image';
         if (!image) throw new Error('Base64 image payload missing.');
-        ws.send(JSON.stringify({ type: 'status', text: 'Analyzing symptom image on laptop...' }));
+        ws.send(JSON.stringify({ type: 'status', text: 'Analyzing symptom image on delegated laptop...' }));
       }
 
       if (type === 'text') {
@@ -227,17 +299,71 @@ wss.on('connection', (ws) => {
       if (type === 'image') {
         mode = 'delegated';
         const imagePayload = image;
-        for await (const event of ai.queryStream(queryText, imagePayload)) {
-          if (event.type === 'token') {
+
+        // Try to connect if model not loaded yet
+        if (!delegatedLlmModelId) {
+          ws.send(JSON.stringify({ type: 'status', text: 'Connecting to P2P peer...' }));
+          await initDelegatedModel();
+        }
+
+        if (!delegatedLlmModelId) {
+          throw new Error('P2P Laptop Provider is unreachable. Make sure the provider is running and LAPTOP_PROVIDER_KEY is configured.');
+        }
+
+        // Handle image attachments
+        let attachments = undefined;
+        if (imagePayload) {
+          const filename = `temp_${Date.now()}.jpg`;
+          const tempDir = path.join(os.tmpdir(), 'pocketdoc-images');
+          if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+          const tempPath = path.join(tempDir, filename);
+          const base64Data = imagePayload.replace(/^data:image\/\w+;base64,/, '');
+          fs.writeFileSync(tempPath, Buffer.from(base64Data, 'base64'));
+          attachments = [{ path: tempPath }];
+        }
+
+        // Get local RAG context on the board
+        let ragContext = '';
+        if (queryText && localEmbeddingModelId) {
+          try {
+            const results = await ragSearch({
+              modelId: localEmbeddingModelId,
+              query: queryText,
+              topK: 3,
+              workspace: 'pocketdoc'
+            });
+            if (results && results.length > 0) {
+              ragContext = results.map(r => r.content).join('\n\n');
+            }
+          } catch (err) {
+            console.error('[RAG] Search failed:', err.message);
+          }
+        }
+
+        const history = [
+          { role: 'system', content: buildSystemPrompt(ragContext) },
+          {
+            role: 'user',
+            content: queryText || 'Please review the symptom shown in the attached image.',
+            ...(attachments ? { attachments } : {})
+          }
+        ];
+
+        const run = completion({
+          modelId: delegatedLlmModelId,
+          history,
+          stream: true
+        });
+
+        for await (const event of run.events) {
+          if (event.type === 'contentDelta') {
             if (!firstTokenTime) firstTokenTime = Date.now();
             tokenCount++;
             ws.send(JSON.stringify({ type: 'token', text: event.text }));
-          } else if (event.type === 'done') {
-            tokenCount = event.tokens || tokenCount;
-          } else if (event.type === 'error') {
-            throw new Error(event.message);
           }
         }
+
+        await run.final;
       } else {
         mode = 'local';
         let ragContext = '';
@@ -329,16 +455,8 @@ async function start() {
     console.error('❌ Board local model initialization failed:', err);
   }
 
-  // Check if laptop AI provider is reachable
-  const health = await ai.checkHealth();
-  if (health.status === 'unreachable') {
-    console.warn('====================================================');
-    console.warn(`⚠️  Laptop AI provider is not reachable at: ${process.env.LAPTOP_AI_URL || 'http://localhost:4000'}`);
-    console.warn('   Make sure to start the provider on your laptop for Camera triage.');
-    console.warn('====================================================');
-  } else {
-    console.log(`✅ Laptop AI provider connected for Camera delegation: ${JSON.stringify(health)}`);
-  }
+  // Pre-connect to peer provider
+  await initDelegatedModel();
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log('====================================================');
@@ -346,7 +464,7 @@ async function start() {
     console.log(`📡 Serving clients over LAN (0.0.0.0)`);
     console.log(`📂 Static assets path: ${path.join(__dirname, '..', 'client')}`);
     console.log(`🧠 Local Board AI: MedPsy-1.7B`);
-    console.log(`🧠 Delegated Laptop AI: ${process.env.LAPTOP_AI_URL || 'http://localhost:4000'}`);
+    console.log(`🧠 Delegated Laptop AI: Qwen3VL-2B (multimodal)`);
     console.log('====================================================');
   });
 }
